@@ -132,7 +132,7 @@ for i in $(seq 1 12); do
     TRMNL_WATCHDOG_REBOOT_STAMP=/tmp/wd-test-reboot \
     ~/trmnl-scripts/scripts/network_watchdog.sh
 done
-rm -f /tmp/wd-test /tmp/wd-test-reboot
+sudo rm -f /tmp/wd-test /tmp/wd-test-reboot
 ```
 
 ## Stale-Screen Alert
