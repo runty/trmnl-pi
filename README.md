@@ -12,6 +12,10 @@ from the Pico W / Pimoroni Inky Frame MicroPython client in `trmnlframe`.
 - Downloads the returned image only when the filename changes.
 - Renders the image through Waveshare's `epd7in3e` Python driver.
 - Runs from cron every 15 minutes and once after boot.
+- Redraws an unchanged image after 12 hours, and treats a panel refresh that
+  finishes in under 10 seconds as a failed draw, so a lost draw is retried.
+- A root systemd timer checks reachability every 5 minutes and re-activates
+  Wi-Fi, toggles the radio, then reboots if the Pi stays offline for an hour.
 - Uses a lock, outer timeout, HTTP retries, display timeout, and BUSY-pin timeout
   so one bad refresh cannot pile up cron jobs indefinitely.
 
@@ -20,6 +24,8 @@ from the Pico W / Pimoroni Inky Frame MicroPython client in `trmnlframe`.
 - `scripts/update_display.py` - TRMNL API fetch, image processing, display update.
 - `scripts/update_display.sh` - cron-safe launcher with env loading, lock, timeout.
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
+- `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.
+- `config/systemd/trmnl-network-watchdog.{service,timer}` - root watchdog units.
 - `trmnl-ws73.env.example` - local configuration template.
 - `config/cron/user-crontab` - user crontab entries.
 - `config/logrotate.d/trmnl-display` - log rotation for `cron.log`.
@@ -85,6 +91,32 @@ sudo nmcli connection modify "<connection-name>" 802-11-wireless.powersave 2
 ```
 
 That setting normally applies on the next reconnect or reboot.
+
+Make NetworkManager retry the Wi-Fi connection forever instead of giving up
+after four failed attempts:
+
+```bash
+sudo nmcli connection modify "<connection-name>" connection.autoconnect-retries 0
+```
+
+## Network Watchdog
+
+The Pi Zero W's Wi-Fi can drop and never come back; in September 2026 ws73 sat
+offline for six weeks showing a stale screen. Install the watchdog timer:
+
+```bash
+sed "s|/home/YOUR_USER|$HOME|g" config/systemd/trmnl-network-watchdog.service \
+  | sudo tee /etc/systemd/system/trmnl-network-watchdog.service >/dev/null
+sudo install -m 644 config/systemd/trmnl-network-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now trmnl-network-watchdog.timer
+```
+
+Every 5 minutes it checks that `usetrmnl.com` resolves. If it does not and the
+default gateway also does not answer, it re-activates `wlan0` after 2 failed
+checks, toggles the Wi-Fi radio from 4, and reboots at 12 (one hour), at most
+once every 6 hours. When the gateway answers but DNS fails, it only logs. Its
+messages go to the journal under `trmnl-network-watchdog`.
 
 ## Waveshare Busy Timeout
 

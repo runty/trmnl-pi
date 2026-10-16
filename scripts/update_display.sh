@@ -2,8 +2,9 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${TRMNL_ENV_FILE:-${SCRIPT_DIR}/trmnl-ws73.env}"
-LOCK_FILE="${TRMNL_LOCK_FILE:-${SCRIPT_DIR}/update_display.lock}"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${TRMNL_ENV_FILE:-${PROJECT_DIR}/trmnl-ws73.env}"
+LOCK_FILE="${TRMNL_LOCK_FILE:-${PROJECT_DIR}/update_display.lock}"
 RUN_TIMEOUT="${TRMNL_RUN_TIMEOUT:-780s}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 

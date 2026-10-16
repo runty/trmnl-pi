@@ -65,8 +65,12 @@ fi
 
 section "Recent Wi-Fi Events"
 journalctl -b --since "${SINCE}" --no-pager 2>/dev/null \
-    | egrep -i "NetworkManager|wlan0|wpa_supplicant|brcmf|DNS|dhcp|link timed|Activation|deauth|disconnect|connect" \
+    | grep -Ei "NetworkManager|wlan0|wpa_supplicant|brcmf|DNS|dhcp|link timed|Activation|deauth|disconnect|connect" \
     | tail -160 || true
+
+section "Network Watchdog"
+systemctl list-timers trmnl-network-watchdog.timer --no-pager 2>/dev/null || true
+journalctl -t trmnl-network-watchdog --since "${SINCE}" --no-pager 2>/dev/null | tail -40 || true
 
 section "Hardware"
 run_optional vcgencmd measure_temp

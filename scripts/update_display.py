@@ -11,6 +11,7 @@ from PIL import Image
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 WAVESHARE_LIB = os.path.expanduser(
     os.getenv("WAVESHARE_LIB", "~/e-Paper/RaspberryPi_JetsonNano/python/lib")
 )
@@ -27,8 +28,13 @@ TARGET_RES = (
     int(os.getenv("TRMNL_HEIGHT", "480")),
 )
 CACHE_FILE = os.path.expanduser(
-    os.getenv("TRMNL_CACHE_FILE", os.path.join(SCRIPT_DIR, "last_image.txt"))
+    os.getenv("TRMNL_CACHE_FILE", os.path.join(PROJECT_DIR, "last_image.txt"))
 )
+# A real Spectra 6 refresh holds BUSY for ~30s; a much faster "success" means
+# the panel did not actually redraw.
+MIN_REFRESH_SECONDS = float(os.getenv("TRMNL_MIN_REFRESH_SECONDS", "10"))
+# Redraw an unchanged image after this long, in case an earlier draw was lost.
+FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL", "Waveshare 7.3 Spectra 6")
 DISPLAY_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_TIMEOUT", "600"))
 DISPLAY_CLEANUP_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_CLEANUP_TIMEOUT", "30"))
@@ -125,9 +131,15 @@ def update_display():
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 last_filename = f.read().strip()
+            cache_age_hours = (time.time() - os.path.getmtime(CACHE_FILE)) / 3600
             if current_filename == last_filename:
-                log(f"No change detected ({current_filename}). Skipping update.")
-                return True
+                if FORCE_REDRAW_HOURS <= 0 or cache_age_hours < FORCE_REDRAW_HOURS:
+                    log(f"No change detected ({current_filename}). Skipping update.")
+                    return True
+                log(
+                    f"Image unchanged for {cache_age_hours:.1f}h ({current_filename}); "
+                    "redrawing anyway."
+                )
 
         log(f"New image found: {current_filename}. Downloading...")
 
@@ -156,8 +168,17 @@ def update_display():
                 epd = epd7in3e.EPD()
                 if epd.init() != 0:
                     raise RuntimeError("display init failed")
+                buffer = epd.getbuffer(img)
                 log("Pushing image to display...")
-                epd.display(epd.getbuffer(img))
+                refresh_start = time.monotonic()
+                epd.display(buffer)
+                refresh_seconds = time.monotonic() - refresh_start
+                log(f"Panel refresh took {refresh_seconds:.1f}s")
+                if refresh_seconds < MIN_REFRESH_SECONDS:
+                    raise RuntimeError(
+                        f"panel refresh took only {refresh_seconds:.1f}s; "
+                        "display did not redraw"
+                    )
             cleanup_attempted = True
             sleep_display(epd)
             epd = None

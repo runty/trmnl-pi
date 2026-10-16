@@ -1,0 +1,7 @@
+[Unit]
+Description=Recover Wi-Fi when the TRMNL host is unreachable
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/YOUR_USER/trmnl-scripts/scripts/network_watchdog.sh
