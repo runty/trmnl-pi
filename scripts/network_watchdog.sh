@@ -6,6 +6,10 @@
 #   TRMNL_WATCHDOG_RECONNECT_AFTER  failures -> re-activate the NM connection
 #   TRMNL_WATCHDOG_RADIO_AFTER      failures -> toggle the Wi-Fi radio
 #   TRMNL_WATCHDOG_REBOOT_AFTER     failures -> reboot (rate limited)
+#
+# TRMNL_WATCHDOG_DRY_RUN=1 logs each recovery step instead of running it.
+# TRMNL_WATCHDOG_GATEWAY overrides the gateway to ping; with an unreachable
+# address such as 192.0.2.1 and a dry run, the escalation can be tested safely.
 set -u
 
 TRMNL_HOST="${TRMNL_WATCHDOG_HOST:-usetrmnl.com}"
@@ -16,10 +20,19 @@ REBOOT_AFTER="${TRMNL_WATCHDOG_REBOOT_AFTER:-12}"
 REBOOT_MIN_INTERVAL="${TRMNL_WATCHDOG_REBOOT_MIN_INTERVAL:-21600}"
 STATE_FILE="${TRMNL_WATCHDOG_STATE:-/run/trmnl-network-watchdog.failures}"
 REBOOT_STAMP="${TRMNL_WATCHDOG_REBOOT_STAMP:-/var/lib/trmnl-network-watchdog/last-reboot}"
+DRY_RUN="${TRMNL_WATCHDOG_DRY_RUN:-0}"
 
 log() {
     printf '%s\n' "$*"
     logger -t trmnl-network-watchdog -- "$*" 2>/dev/null || true
+}
+
+act() {
+    if [ "${DRY_RUN}" = "1" ]; then
+        log "DRY RUN: would run: $*"
+        return 0
+    fi
+    "$@"
 }
 
 healthy() {
@@ -27,6 +40,10 @@ healthy() {
 }
 
 gateway() {
+    if [ -n "${TRMNL_WATCHDOG_GATEWAY:-}" ]; then
+        printf '%s\n' "${TRMNL_WATCHDOG_GATEWAY}"
+        return
+    fi
     ip -4 route show default dev "${WIFI_DEVICE}" 2>/dev/null | awk '/default/ {print $3; exit}'
 }
 
@@ -64,10 +81,12 @@ if [ "${failures}" -ge "${REBOOT_AFTER}" ]; then
     case "${last}" in ''|*[!0-9]*) last=0 ;; esac
     if [ "$((now - last))" -ge "${REBOOT_MIN_INTERVAL}" ]; then
         log "Rebooting to recover Wi-Fi."
-        mkdir -p "$(dirname "${REBOOT_STAMP}")"
-        printf '%s\n' "${now}" > "${REBOOT_STAMP}"
-        sync
-        systemctl reboot
+        if [ "${DRY_RUN}" != "1" ]; then
+            mkdir -p "$(dirname "${REBOOT_STAMP}")"
+            printf '%s\n' "${now}" > "${REBOOT_STAMP}"
+            sync
+        fi
+        act systemctl reboot
         exit 0
     fi
     log "Reboot skipped; last watchdog reboot was $((now - last))s ago."
@@ -75,12 +94,12 @@ fi
 
 if [ "${failures}" -ge "${RADIO_AFTER}" ]; then
     log "Toggling the Wi-Fi radio."
-    nmcli radio wifi off
-    sleep 5
-    nmcli radio wifi on
+    act timeout 30 nmcli radio wifi off
+    act sleep 5
+    act timeout 30 nmcli radio wifi on
 elif [ "${failures}" -ge "${RECONNECT_AFTER}" ]; then
     log "Re-activating Wi-Fi on ${WIFI_DEVICE}."
-    nmcli device set "${WIFI_DEVICE}" autoconnect yes >/dev/null 2>&1 || true
-    timeout 60 nmcli device connect "${WIFI_DEVICE}" || true
+    act timeout 30 nmcli device set "${WIFI_DEVICE}" autoconnect yes || true
+    act timeout 60 nmcli device connect "${WIFI_DEVICE}" || true
 fi
 exit 0

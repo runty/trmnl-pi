@@ -60,7 +60,11 @@ except Exception as e:
 PY
 if command -v nmcli >/dev/null 2>&1; then
     nmcli -t -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show wlan0 2>/dev/null || true
-    nmcli -f 802-11-wireless.powersave connection show netplan-wlan0-pw24 2>/dev/null || true
+    wifi_connection="$(nmcli -g GENERAL.CONNECTION device show wlan0 2>/dev/null)"
+    if [ -n "${wifi_connection}" ]; then
+        nmcli -f 802-11-wireless.powersave,connection.autoconnect-retries \
+            connection show "${wifi_connection}" 2>/dev/null || true
+    fi
 fi
 
 section "Recent Wi-Fi Events"

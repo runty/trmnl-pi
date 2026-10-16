@@ -4,4 +4,6 @@ After=NetworkManager.service
 
 [Service]
 Type=oneshot
+# Every nmcli call is time-limited; this backstops a wedged Wi-Fi driver.
+TimeoutStartSec=3min
 ExecStart=/home/YOUR_USER/trmnl-scripts/scripts/network_watchdog.sh

@@ -16,6 +16,10 @@ from the Pico W / Pimoroni Inky Frame MicroPython client in `trmnlframe`.
   finishes in under 10 seconds as a failed draw, so a lost draw is retried.
 - A root systemd timer checks reachability every 5 minutes and re-activates
   Wi-Fi, toggles the radio, then reboots if the Pi stays offline for an hour.
+- Optionally pings an Uptime Kuma push monitor after each successful run, so a
+  stale screen raises an alert.
+- Sends the Wi-Fi signal level (`RSSI`) to TRMNL, shown on the device page.
+- Refuses to run if the Waveshare BUSY timeout patch is missing.
 - Uses a lock, outer timeout, HTTP retries, display timeout, and BUSY-pin timeout
   so one bad refresh cannot pile up cron jobs indefinitely.
 
@@ -117,6 +121,34 @@ default gateway also does not answer, it re-activates `wlan0` after 2 failed
 checks, toggles the Wi-Fi radio from 4, and reboots at 12 (one hour), at most
 once every 6 hours. When the gateway answers but DNS fails, it only logs. Its
 messages go to the journal under `trmnl-network-watchdog`.
+
+Test the escalation without touching Wi-Fi by pointing it at a missing host and
+an unreachable gateway in dry-run mode; each run adds one failure:
+
+```bash
+for i in $(seq 1 12); do
+  sudo TRMNL_WATCHDOG_DRY_RUN=1 TRMNL_WATCHDOG_HOST=nonexistent.invalid \
+    TRMNL_WATCHDOG_GATEWAY=192.0.2.1 TRMNL_WATCHDOG_STATE=/tmp/wd-test \
+    TRMNL_WATCHDOG_REBOOT_STAMP=/tmp/wd-test-reboot \
+    ~/trmnl-scripts/scripts/network_watchdog.sh
+done
+rm -f /tmp/wd-test /tmp/wd-test-reboot
+```
+
+## Stale-Screen Alert
+
+Create an Uptime Kuma **Push** monitor (30 minute heartbeat interval, 1 retry,
+so it alerts after about an hour without a successful draw) and put its push
+URL in `trmnl-ws73.env`:
+
+```bash
+TRMNL_HEARTBEAT_URL=https://uptime.example.org/api/push/<token>
+```
+
+`update_display.sh` pings it after every successful run; a failed ping only
+logs a warning. If the Kuma hostname resolves to an address the Pi cannot reach
+(for example a Tailscale address), pin it to a LAN address with
+`TRMNL_HEARTBEAT_RESOLVE=host:443:address`, which is passed to `curl --resolve`.
 
 ## Waveshare Busy Timeout
 

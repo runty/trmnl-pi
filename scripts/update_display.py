@@ -19,6 +19,9 @@ sys.path.insert(0, WAVESHARE_LIB)
 
 from waveshare_epd import epd7in3e  # noqa: E402
 
+# The stock driver waits on BUSY forever; patches/ adds a bounded wait.
+BUSY_PATCH_APPLIED = hasattr(epd7in3e, "BUSY_TIMEOUT_SECONDS")
+
 
 BASE_URL = os.getenv("TRMNL_BASE_URL", "https://usetrmnl.com")
 API_KEY = os.getenv("TRMNL_API_KEY", "")
@@ -36,6 +39,8 @@ MIN_REFRESH_SECONDS = float(os.getenv("TRMNL_MIN_REFRESH_SECONDS", "10"))
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL", "Waveshare 7.3 Spectra 6")
+CLIENT_VERSION = "1.1.0"
+WIFI_DEVICE = os.getenv("TRMNL_WIFI_DEVICE", "wlan0")
 DISPLAY_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_TIMEOUT", "600"))
 DISPLAY_CLEANUP_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_CLEANUP_TIMEOUT", "30"))
 HTTP_ATTEMPTS = int(os.getenv("TRMNL_HTTP_ATTEMPTS", "3"))
@@ -88,7 +93,33 @@ def sleep_display(epd):
         epd.sleep()
 
 
+def wifi_rssi():
+    """Signal level in dBm from /proc/net/wireless, or None."""
+    try:
+        with open("/proc/net/wireless", "r", encoding="utf-8") as f:
+            for line in f:
+                fields = line.split()
+                if fields and fields[0] == f"{WIFI_DEVICE}:":
+                    return int(float(fields[3]))
+    except (OSError, IndexError, ValueError):
+        pass
+    return None
+
+
+def write_cache(filename):
+    tmp = f"{CACHE_FILE}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(filename)
+    os.replace(tmp, CACHE_FILE)
+
+
 def validate_config():
+    if not BUSY_PATCH_APPLIED:
+        log(
+            "Waveshare BUSY timeout patch is missing from "
+            f"{epd7in3e.__file__}; reapply patches/waveshare-epd7in3e-busy-timeout.patch"
+        )
+        return False
     if not API_KEY:
         log("Missing TRMNL_API_KEY")
         return False
@@ -111,7 +142,11 @@ def update_display():
             "Width": str(TARGET_RES[0]),
             "Height": str(TARGET_RES[1]),
             "Model": DISPLAY_MODEL,
+            "FW-Version": CLIENT_VERSION,
         }
+        rssi = wifi_rssi()
+        if rssi is not None:
+            headers["RSSI"] = str(rssi)
         api_response = get_with_retries(api_url, headers=headers, timeout=30)
         try:
             if api_response.status_code != 200:
@@ -120,6 +155,12 @@ def update_display():
             data = api_response.json()
         finally:
             api_response.close()
+
+        api_status = data.get("status", 0)
+        if api_status not in (0, 200):
+            reason = data.get("error") or data.get("message") or "no reason given"
+            log(f"API returned status {api_status}: {reason}")
+            return False
 
         img_url = data.get("image_url")
         current_filename = data.get("filename") or data.get("image_name") or img_url
@@ -155,10 +196,13 @@ def update_display():
         finally:
             img_response.close()
 
-        img = img.resize(TARGET_RES, Image.Resampling.LANCZOS).convert("RGB")
+        # Convert first: Pillow resizes palette images with NEAREST regardless
+        # of the requested filter.
+        img = img.convert("RGB")
+        if img.size != TARGET_RES:
+            img = img.resize(TARGET_RES, Image.Resampling.LANCZOS)
 
         epd = None
-        cleanup_attempted = False
         try:
             with deadline(
                 DISPLAY_TIMEOUT_SECONDS,
@@ -179,19 +223,19 @@ def update_display():
                         f"panel refresh took only {refresh_seconds:.1f}s; "
                         "display did not redraw"
                     )
-            cleanup_attempted = True
-            sleep_display(epd)
-            epd = None
-        finally:
-            if epd is not None and not cleanup_attempted:
+        except BaseException as draw_error:
+            # Log the draw failure before cleanup, so a cleanup failure on a
+            # wedged panel cannot hide the original cause.
+            log(f"Display update failed: {draw_error!r}")
+            if epd is not None:
                 try:
                     sleep_display(epd)
                 except Exception as cleanup_error:
-                    log(f"Display cleanup failed: {cleanup_error}")
-                    raise
+                    log(f"Display cleanup also failed: {cleanup_error}")
+            raise
+        sleep_display(epd)
 
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            f.write(current_filename)
+        write_cache(current_filename)
 
         log("Update complete!")
         return True

@@ -7,9 +7,28 @@ ENV_FILE="${TRMNL_ENV_FILE:-${PROJECT_DIR}/trmnl-ws73.env}"
 LOCK_FILE="${TRMNL_LOCK_FILE:-${PROJECT_DIR}/update_display.lock}"
 RUN_TIMEOUT="${TRMNL_RUN_TIMEOUT:-780s}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+HEARTBEAT_URL="${TRMNL_HEARTBEAT_URL:-}"
+HEARTBEAT_RESOLVE="${TRMNL_HEARTBEAT_RESOLVE:-}"
 
 log() {
     printf '[%s] %s\n' "$(date -Is)" "$*"
+}
+
+# Tell an Uptime Kuma push monitor that a run succeeded; Kuma alerts when the
+# pushes stop. Failures here never change the run's exit status.
+send_heartbeat() {
+    [ -n "${HEARTBEAT_URL}" ] || return 0
+    local resolve_args=()
+    if [ -n "${HEARTBEAT_RESOLVE}" ]; then
+        resolve_args=(--resolve "${HEARTBEAT_RESOLVE}")
+    fi
+    if ! curl -fsS -o /dev/null --max-time 15 "${resolve_args[@]}" -G \
+        --data-urlencode "status=up" \
+        --data-urlencode "msg=$1" \
+        --data-urlencode "ping=$2" \
+        "${HEARTBEAT_URL}"; then
+        log "WARNING: heartbeat push failed."
+    fi
 }
 
 if [ -r "${ENV_FILE}" ]; then
@@ -31,11 +50,11 @@ log "Starting TRMNL display update."
 set +e
 timeout --kill-after=30s "${RUN_TIMEOUT}" "${PYTHON_BIN}" -u "${SCRIPT_DIR}/update_display.py"
 status="$?"
-set -e
 
 elapsed="$(( $(date +%s) - start_ts ))"
 if [ "${status}" -eq 0 ]; then
     log "Finished TRMNL display update in ${elapsed}s."
+    send_heartbeat "OK" "$((elapsed * 1000))"
 elif [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
     log "ERROR: TRMNL display update timed out after ${RUN_TIMEOUT}; exit status ${status}."
 else
