@@ -4,11 +4,6 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${TRMNL_ENV_FILE:-${PROJECT_DIR}/trmnl-ws73.env}"
-LOCK_FILE="${TRMNL_LOCK_FILE:-${PROJECT_DIR}/update_display.lock}"
-RUN_TIMEOUT="${TRMNL_RUN_TIMEOUT:-780s}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-HEARTBEAT_URL="${TRMNL_HEARTBEAT_URL:-}"
-HEARTBEAT_RESOLVE="${TRMNL_HEARTBEAT_RESOLVE:-}"
 
 log() {
     printf '[%s] %s\n' "$(date -Is)" "$*"
@@ -37,6 +32,13 @@ if [ -r "${ENV_FILE}" ]; then
     . "${ENV_FILE}"
     set +a
 fi
+
+# Read settings after the env file so values set there (cron passes none) apply.
+LOCK_FILE="${TRMNL_LOCK_FILE:-${PROJECT_DIR}/update_display.lock}"
+RUN_TIMEOUT="${TRMNL_RUN_TIMEOUT:-780s}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+HEARTBEAT_URL="${TRMNL_HEARTBEAT_URL:-}"
+HEARTBEAT_RESOLVE="${TRMNL_HEARTBEAT_RESOLVE:-}"
 
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
