@@ -34,6 +34,12 @@ and each level is mapped to the value the driver expects. A pure black-and-white
 image keeps the faster 1-bit path. Set `TRMNL_GRAYSCALE=off` to dither every
 image to black and white instead.
 
+TRMNL only renders grays for firmware 1.6 or later, which it reads from the
+`FW-Version` header; the client sends its own version (1.3.0) unless
+`TRMNL_FW_VERSION` is set. For 4 grays, set `TRMNL_FW_VERSION=1.8.17`, choose the
+"TRMNL OG (2-bit)" model and the 4-gray colour palette on trmnl.com, and wait for
+each plugin's next refresh.
+
 On a Pi Zero 2 W a 4-gray draw takes about 15 s (1.5 s to build the buffer and
 9 s to send it byte by byte and refresh), against about 10 s for 1-bit.
 

@@ -64,6 +64,10 @@ MIN_REFRESH_SECONDS = float(
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
 CLIENT_VERSION = "1.3.0"
+# TRMNL reads FW-Version as the device's firmware and offers colour palettes,
+# such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
+# firmware version instead of this client's.
+FW_VERSION = os.getenv("TRMNL_FW_VERSION") or CLIENT_VERSION
 WIFI_DEVICE = os.getenv("TRMNL_WIFI_DEVICE", "wlan0")
 DISPLAY_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_TIMEOUT", "600"))
 DISPLAY_CLEANUP_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_CLEANUP_TIMEOUT", "30"))
@@ -284,7 +288,7 @@ def update_display():
             "Width": str(TARGET_RES[0]),
             "Height": str(TARGET_RES[1]),
             "Model": DISPLAY_MODEL,
-            "FW-Version": CLIENT_VERSION,
+            "FW-Version": FW_VERSION,
         }
         rssi = wifi_rssi()
         if rssi is not None:
