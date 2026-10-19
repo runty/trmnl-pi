@@ -244,7 +244,8 @@ TRMNL_PUBLISH_DIR=$HOME/trmnl-scripts/www
 ```
 
 After each successful draw, `update_display.py` saves the image as the panel
-shows it to `current.png` there: 1-bit, or 2-bit gray for 4-gray screens. A
+shows it to `current.png` there: 1-bit, or 8-bit gray holding only the four levels for
+4-gray screens (smaller than a 2-bit palette file of the same pixels). A
 failed save only logs a warning. Serve the folder on port 8075:
 
 ```bash

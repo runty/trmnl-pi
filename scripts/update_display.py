@@ -155,7 +155,7 @@ def write_cache(filename):
     os.replace(tmp, CACHE_FILE)
 
 
-def publish_image(img, gray):
+def publish_image(img):
     """Save the drawn image as PUBLISH_DIR/current.png; failures only log."""
     if not PUBLISH_DIR:
         return
@@ -163,8 +163,9 @@ def publish_image(img, gray):
     tmp = f"{path}.tmp"
     try:
         os.makedirs(PUBLISH_DIR, exist_ok=True)
-        # A 4-gray image holds only GRAY_LEVELS, so 2 bits store it exactly.
-        img.save(tmp, "PNG", optimize=True, **({"bits": 2} if gray else {}))
+        # A 4-gray image is saved as 8-bit gray holding only GRAY_LEVELS; it
+        # compresses smaller than a 2-bit palette PNG of the same pixels.
+        img.save(tmp, "PNG", optimize=True)
         os.replace(tmp, path)
     except Exception as e:
         log(f"WARNING: could not publish {path}: {e}")
@@ -404,7 +405,7 @@ def update_display():
         draw(driver, img, gray)
 
         write_cache(current_filename)
-        publish_image(img, gray)
+        publish_image(img)
 
         log("Update complete!")
         return True
