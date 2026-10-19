@@ -1,19 +1,37 @@
-# trmnl-ws73
+# trmnl-pi
 
-TRMNL client for a Raspberry Pi OS host driving a Waveshare 7.3 inch Spectra 6
-e-paper display.
+TRMNL client for a Raspberry Pi OS host driving a Waveshare e-paper panel
+through Waveshare's Python library.
 
-This is the Linux/Python setup for a Raspberry Pi OS TRMNL frame. It is separate
-from the Pico W / Pimoroni Inky Frame MicroPython client in `trmnlframe`.
+It started as `trmnl-ws73`, the client for a Pi Zero W with a 7.3 inch Spectra 6
+panel, and now drives either panel below. It is separate from the Pico W /
+Pimoroni Inky Frame MicroPython client in `trmnlframe`.
+
+## Panels
+
+Set `TRMNL_PANEL` in `trmnl-pi.env` to the Waveshare driver for the attached panel:
+
+| `TRMNL_PANEL` | Panel | Image | Real refresh |
+| --- | --- | --- | --- |
+| `epd7in5_V2` | 7.5 inch V2, 800×480, black and white | 1-bit | about 5 s |
+| `epd7in3e` | 7.3 inch Spectra 6, 800×480 | RGB | about 30 s |
+
+Each driver needs its BUSY timeout patch from `patches/` (see below). The
+panel also sets the `Model` header and the shortest refresh that counts as a
+real redraw; `TRMNL_MODEL` and `TRMNL_MIN_REFRESH_SECONDS` override them.
+
+On TRMNL, set the device's model to one that matches the panel, so screens are
+rendered for its size and inks.
 
 ## What It Does
 
 - Fetches `/api/display` from TRMNL.
 - Downloads the returned image only when the filename changes.
-- Renders the image through Waveshare's `epd7in3e` Python driver.
+- Renders the image through the Waveshare driver named by `TRMNL_PANEL`.
 - Runs from cron every 15 minutes and once after boot.
 - Redraws an unchanged image after 12 hours, and treats a panel refresh that
-  finishes in under 10 seconds as a failed draw, so a lost draw is retried.
+  finishes faster than the panel's minimum as a failed draw, so a lost draw is
+  retried.
 - A root systemd timer checks reachability every 5 minutes and re-activates
   Wi-Fi, toggles the radio, then reboots if the Pi stays offline for an hour.
 - Optionally pings an Uptime Kuma push monitor after each successful run, so a
@@ -30,41 +48,52 @@ from the Pico W / Pimoroni Inky Frame MicroPython client in `trmnlframe`.
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
 - `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.
 - `config/systemd/trmnl-network-watchdog.{service,timer}` - root watchdog units.
-- `trmnl-ws73.env.example` - local configuration template.
+- `trmnl-pi.env.example` - local configuration template.
 - `config/cron/user-crontab` - user crontab entries.
 - `config/logrotate.d/trmnl-display` - log rotation for `cron.log`.
 - `config/journald.conf.d/90-trmnl-persistent-storage.conf` - optional persistent journald config.
-- `patches/waveshare-epd7in3e-busy-timeout.patch` - patch for Waveshare's unbounded BUSY wait.
+- `patches/waveshare-<driver>-busy-timeout.patch` - patches for Waveshare's unbounded BUSY waits.
 
 ## Install
 
-Install the system packages:
+Waveshare's e-Paper Driver HAT plugs straight onto the Pi's 40-pin header. Set
+its Interface Config switch to 4-line SPI; Display Config B (0.47R) suits the
+7.5 inch panel.
+
+Enable SPI and install the system packages:
 
 ```bash
-sudo apt install python3-requests python3-pil python3-spidev python3-gpiozero logrotate
+sudo raspi-config nonint do_spi 0
+sudo apt install git python3-requests python3-pil python3-spidev python3-gpiozero logrotate
 ```
 
-Install or clone Waveshare's e-Paper Python library so this path exists:
+Clone Waveshare's e-Paper library so the driver exists, for example:
 
 ```bash
-~/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/epd7in3e.py
+git clone https://github.com/waveshareteam/e-Paper.git ~/e-Paper
+ls ~/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/epd7in5_V2.py
 ```
 
 Clone this repo on the Pi:
 
 ```bash
-git clone https://github.com/runty/trmnl-ws73.git ~/trmnl-scripts
+git clone https://github.com/runty/trmnl-pi.git ~/trmnl-scripts
 cd ~/trmnl-scripts
-cp trmnl-ws73.env.example trmnl-ws73.env
-chmod 600 trmnl-ws73.env
+cp trmnl-pi.env.example trmnl-pi.env
+chmod 600 trmnl-pi.env
 ```
 
-Edit `trmnl-ws73.env` and set:
+Edit `trmnl-pi.env` and set:
 
 ```bash
 TRMNL_API_KEY=...
 TRMNL_MAC=...
+TRMNL_PANEL=epd7in5_V2
 ```
+
+TRMNL identifies the device by `TRMNL_MAC`, not by the Pi's own address, so a
+replacement Pi can keep an existing device's API key and MAC; change only the
+device's model on TRMNL if the panel changed.
 
 Install cron and log rotation:
 
@@ -105,8 +134,9 @@ sudo nmcli connection modify "<connection-name>" connection.autoconnect-retries 
 
 ## Network Watchdog
 
-The Pi Zero W's Wi-Fi can drop and never come back; in September 2026 ws73 sat
-offline for six weeks showing a stale screen. Install the watchdog timer:
+A Pi Zero W's Wi-Fi can drop and never come back; in September 2026 the first
+frame running this client sat offline for six weeks showing a stale screen.
+Install the watchdog timer:
 
 ```bash
 sed "s|/home/YOUR_USER|$HOME|g" config/systemd/trmnl-network-watchdog.service \
@@ -139,7 +169,7 @@ sudo rm -f /tmp/wd-test /tmp/wd-test-reboot
 
 Create an Uptime Kuma **Push** monitor (30 minute heartbeat interval, 1 retry,
 so it alerts after about an hour without a successful draw) and put its push
-URL in `trmnl-ws73.env`:
+URL in `trmnl-pi.env`:
 
 ```bash
 TRMNL_HEARTBEAT_URL=https://uptime.example.org/api/push/<token>
@@ -152,16 +182,17 @@ logs a warning. If the Kuma hostname resolves to an address the Pi cannot reach
 
 ## Waveshare Busy Timeout
 
-Waveshare's `epd7in3e.py` has an unbounded wait on the display BUSY pin. Apply
-the patch so hardware/display stalls fail the update instead of leaving Python
-blocked forever:
+Waveshare's drivers wait on the display BUSY pin without a limit. Apply the
+patch for your panel so hardware/display stalls fail the update instead of
+leaving Python blocked forever:
 
 ```bash
 cd ~/e-Paper/RaspberryPi_JetsonNano/python/lib
-patch -p1 < ~/trmnl-scripts/patches/waveshare-epd7in3e-busy-timeout.patch
+patch -p1 < ~/trmnl-scripts/patches/waveshare-epd7in5_V2-busy-timeout.patch
 ```
 
-The timeout defaults to 180 seconds and can be changed with:
+Use `waveshare-epd7in3e-busy-timeout.patch` for the 7.3 inch panel. The
+timeout defaults to 180 seconds and can be changed with:
 
 ```bash
 WAVESHARE_BUSY_TIMEOUT=180
@@ -206,4 +237,4 @@ GPIO messages in `journalctl`.
 
 ## Notes
 
-Do not commit `trmnl-ws73.env`; it contains the TRMNL API key and device MAC.
+Do not commit `trmnl-pi.env`; it contains the TRMNL API key and device MAC.

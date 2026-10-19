@@ -3,7 +3,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${TRMNL_ENV_FILE:-${PROJECT_DIR}/trmnl-ws73.env}"
+ENV_FILE="${TRMNL_ENV_FILE:-${PROJECT_DIR}/trmnl-pi.env}"
 
 log() {
     printf '[%s] %s\n' "$(date -Is)" "$*"

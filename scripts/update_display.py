@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import importlib
 import os
 import signal
 import sys
@@ -17,11 +18,25 @@ WAVESHARE_LIB = os.path.expanduser(
 )
 sys.path.insert(0, WAVESHARE_LIB)
 
-from waveshare_epd import epd7in3e  # noqa: E402
-
-# The stock driver waits on BUSY forever; patches/ adds a bounded wait.
-BUSY_PATCH_APPLIED = hasattr(epd7in3e, "BUSY_TIMEOUT_SECONDS")
-
+# Supported Waveshare drivers, chosen with TRMNL_PANEL. image_mode is what the
+# image is converted to before the driver's getbuffer(); a refresh faster than
+# min_refresh_seconds means the panel did not actually redraw.
+PANELS = {
+    # 7.3" Spectra 6: a real refresh holds BUSY for ~30s.
+    "epd7in3e": {
+        "image_mode": "RGB",
+        "min_refresh_seconds": 10,
+        "model": "Waveshare 7.3 Spectra 6",
+    },
+    # 7.5" V2 black and white: a full refresh takes about 5s.
+    "epd7in5_V2": {
+        "image_mode": "1",
+        "min_refresh_seconds": 2,
+        "model": "Waveshare 7.5 V2",
+    },
+}
+PANEL_NAME = os.getenv("TRMNL_PANEL", "")
+PANEL = PANELS.get(PANEL_NAME, {})
 
 BASE_URL = os.getenv("TRMNL_BASE_URL", "https://usetrmnl.com")
 API_KEY = os.getenv("TRMNL_API_KEY", "")
@@ -33,13 +48,13 @@ TARGET_RES = (
 CACHE_FILE = os.path.expanduser(
     os.getenv("TRMNL_CACHE_FILE", os.path.join(PROJECT_DIR, "last_image.txt"))
 )
-# A real Spectra 6 refresh holds BUSY for ~30s; a much faster "success" means
-# the panel did not actually redraw.
-MIN_REFRESH_SECONDS = float(os.getenv("TRMNL_MIN_REFRESH_SECONDS", "10"))
+MIN_REFRESH_SECONDS = float(
+    os.getenv("TRMNL_MIN_REFRESH_SECONDS") or PANEL.get("min_refresh_seconds", 10)
+)
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
-DISPLAY_MODEL = os.getenv("TRMNL_MODEL", "Waveshare 7.3 Spectra 6")
-CLIENT_VERSION = "1.1.0"
+DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
+CLIENT_VERSION = "1.2.0"
 WIFI_DEVICE = os.getenv("TRMNL_WIFI_DEVICE", "wlan0")
 DISPLAY_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_TIMEOUT", "600"))
 DISPLAY_CLEANUP_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_CLEANUP_TIMEOUT", "30"))
@@ -113,13 +128,41 @@ def write_cache(filename):
     os.replace(tmp, CACHE_FILE)
 
 
-def validate_config():
-    if not BUSY_PATCH_APPLIED:
+def load_driver():
+    """Import the Waveshare driver named by TRMNL_PANEL, or log why not and return None."""
+    if PANEL_NAME not in PANELS:
+        log(f"Set TRMNL_PANEL to one of: {', '.join(PANELS)} (got {PANEL_NAME!r})")
+        return None
+    try:
+        driver = importlib.import_module(f"waveshare_epd.{PANEL_NAME}")
+    except ImportError as e:
+        log(f"Cannot import Waveshare driver {PANEL_NAME} from {WAVESHARE_LIB}: {e}")
+        return None
+    # The stock drivers wait on BUSY forever; patches/ adds a bounded wait.
+    if not hasattr(driver, "BUSY_TIMEOUT_SECONDS"):
         log(
-            "Waveshare BUSY timeout patch is missing from "
-            f"{epd7in3e.__file__}; reapply patches/waveshare-epd7in3e-busy-timeout.patch"
+            f"Waveshare BUSY timeout patch is missing from {driver.__file__}; "
+            f"apply patches/waveshare-{PANEL_NAME}-busy-timeout.patch"
         )
-        return False
+        return None
+    return driver
+
+
+def prepare_image(img):
+    """Convert and size a downloaded image for the panel's getbuffer()."""
+    mode = PANEL["image_mode"]
+    # Convert first: Pillow resizes palette images with NEAREST regardless
+    # of the requested filter.
+    img = img.convert("RGB" if mode == "RGB" else "L")
+    if img.size != TARGET_RES:
+        img = img.resize(TARGET_RES, Image.Resampling.LANCZOS)
+    if mode == "1":
+        # A 1-bit image passes through unchanged; grayscale is dithered.
+        img = img.convert("1")
+    return img
+
+
+def validate_config():
     if not API_KEY:
         log("Missing TRMNL_API_KEY")
         return False
@@ -130,7 +173,8 @@ def validate_config():
 
 
 def update_display():
-    if not validate_config():
+    driver = load_driver()
+    if driver is None or not validate_config():
         return False
 
     try:
@@ -196,11 +240,7 @@ def update_display():
         finally:
             img_response.close()
 
-        # Convert first: Pillow resizes palette images with NEAREST regardless
-        # of the requested filter.
-        img = img.convert("RGB")
-        if img.size != TARGET_RES:
-            img = img.resize(TARGET_RES, Image.Resampling.LANCZOS)
+        img = prepare_image(img)
 
         epd = None
         try:
@@ -209,7 +249,7 @@ def update_display():
                 f"display update exceeded {DISPLAY_TIMEOUT_SECONDS}s",
             ):
                 log("Initializing display...")
-                epd = epd7in3e.EPD()
+                epd = driver.EPD()
                 if epd.init() != 0:
                     raise RuntimeError("display init failed")
                 buffer = epd.getbuffer(img)
