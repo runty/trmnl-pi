@@ -13,7 +13,7 @@ Set `TRMNL_PANEL` in `trmnl-pi.env` to the Waveshare driver for the attached pan
 
 | `TRMNL_PANEL` | Panel | Image | Real refresh |
 | --- | --- | --- | --- |
-| `epd7in5_V2` | 7.5 inch V2, 800×480, black and white | 1-bit | about 3 s |
+| `epd7in5_V2` | 7.5 inch V2, 800×480, black and white | 1-bit or 4 grays | about 3 s (1-bit) |
 | `epd7in3e` | 7.3 inch Spectra 6, 800×480 | RGB | about 30 s |
 
 Each driver needs its BUSY timeout patch from `patches/` (see below). The
@@ -21,7 +21,30 @@ panel also sets the `Model` header and the shortest refresh that counts as a
 real redraw; `TRMNL_MODEL` and `TRMNL_MIN_REFRESH_SECONDS` override them.
 
 On TRMNL, set the device's model to one that matches the panel, so screens are
-rendered for its size and inks.
+rendered for its size and inks. For the 7.5 inch panel that is "Waveshare 7.5"
+B/W" (1-bit) or "TRMNL OG (2-bit)" (4 grays), which is built for the same panel.
+
+## Grayscale
+
+The 7.5 inch panel can also show four shades: black, dark gray, light gray and
+white. An image that contains any gray is drawn in the driver's 4-gray mode
+(`init_4Gray`, `getbuffer_4Gray`, `display_4Gray`): it is dithered to the four
+levels of a 2-bit image (a 2-bit image from TRMNL passes through unchanged),
+and each level is mapped to the value the driver expects. A pure black-and-white
+image keeps the faster 1-bit path. Set `TRMNL_GRAYSCALE=off` to dither every
+image to black and white instead.
+
+On a Pi Zero 2 W a 4-gray draw takes about 15 s (1.5 s to build the buffer and
+9 s to send it byte by byte and refresh), against about 10 s for 1-bit.
+
+To check the panel's shades without TRMNL, draw the test card: four bands in
+the 2-bit grays above a black-to-white gradient. It takes the same lock as cron,
+skips the Kuma heartbeat, and forgets the cached TRMNL filename so the next run
+redraws the TRMNL screen:
+
+```bash
+~/trmnl-scripts/scripts/update_display.sh --test-pattern
+```
 
 ## What It Does
 

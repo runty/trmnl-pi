@@ -47,16 +47,18 @@ if ! flock -n 9; then
 fi
 
 start_ts="$(date +%s)"
-log "Starting TRMNL display update."
+log "Starting TRMNL display update${1:+ ($*)}."
 
 set +e
-timeout --kill-after=30s "${RUN_TIMEOUT}" "${PYTHON_BIN}" -u "${SCRIPT_DIR}/update_display.py"
+# Arguments (such as --test-pattern) go to update_display.py.
+timeout --kill-after=30s "${RUN_TIMEOUT}" "${PYTHON_BIN}" -u "${SCRIPT_DIR}/update_display.py" "$@"
 status="$?"
 
 elapsed="$(( $(date +%s) - start_ts ))"
 if [ "${status}" -eq 0 ]; then
     log "Finished TRMNL display update in ${elapsed}s."
-    send_heartbeat "OK" "$((elapsed * 1000))"
+    # Only a real TRMNL update counts as a heartbeat.
+    [ "$#" -eq 0 ] && send_heartbeat "OK" "$((elapsed * 1000))"
 elif [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
     log "ERROR: TRMNL display update timed out after ${RUN_TIMEOUT}; exit status ${status}."
 else

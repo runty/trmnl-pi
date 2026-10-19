@@ -20,7 +20,8 @@ sys.path.insert(0, WAVESHARE_LIB)
 
 # Supported Waveshare drivers, chosen with TRMNL_PANEL. image_mode is what the
 # image is converted to before the driver's getbuffer(); a refresh faster than
-# min_refresh_seconds means the panel did not actually redraw.
+# min_refresh_seconds means the panel did not actually redraw. gray4 names the
+# driver's init, getbuffer and display methods for its 4-gray mode.
 PANELS = {
     # 7.3" Spectra 6: a real refresh holds BUSY for ~30s.
     "epd7in3e": {
@@ -33,10 +34,18 @@ PANELS = {
         "image_mode": "1",
         "min_refresh_seconds": 1,
         "model": "Waveshare 7.5 V2",
+        "gray4": ("init_4Gray", "getbuffer_4Gray", "display_4Gray"),
     },
 }
 PANEL_NAME = os.getenv("TRMNL_PANEL", "")
 PANEL = PANELS.get(PANEL_NAME, {})
+# "auto" draws images that contain grays in the panel's 4-gray mode; "off"
+# always dithers to black and white.
+GRAYSCALE = os.getenv("TRMNL_GRAYSCALE", "auto").lower()
+# The four levels of a 2-bit image, black to white, and the values Waveshare's
+# getbuffer_4Gray() expects for them (its GRAY4, GRAY3, GRAY2 and GRAY1).
+GRAY_LEVELS = (0, 85, 170, 255)
+WAVESHARE_GRAYS = (0x00, 0x80, 0xC0, 0xFF)
 
 BASE_URL = os.getenv("TRMNL_BASE_URL", "https://usetrmnl.com")
 API_KEY = os.getenv("TRMNL_API_KEY", "")
@@ -54,7 +63,7 @@ MIN_REFRESH_SECONDS = float(
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.2.0"
+CLIENT_VERSION = "1.3.0"
 WIFI_DEVICE = os.getenv("TRMNL_WIFI_DEVICE", "wlan0")
 DISPLAY_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_TIMEOUT", "600"))
 DISPLAY_CLEANUP_TIMEOUT_SECONDS = int(os.getenv("TRMNL_DISPLAY_CLEANUP_TIMEOUT", "30"))
@@ -149,17 +158,106 @@ def load_driver():
 
 
 def prepare_image(img):
-    """Convert and size a downloaded image for the panel's getbuffer()."""
+    """Convert and size a downloaded image for the panel.
+
+    Returns (image, gray): gray is True when the image should be drawn in the
+    panel's 4-gray mode.
+    """
     mode = PANEL["image_mode"]
     # Convert first: Pillow resizes palette images with NEAREST regardless
     # of the requested filter.
     img = img.convert("RGB" if mode == "RGB" else "L")
     if img.size != TARGET_RES:
         img = img.resize(TARGET_RES, Image.Resampling.LANCZOS)
-    if mode == "1":
-        # A 1-bit image passes through unchanged; grayscale is dithered.
-        img = img.convert("1")
+    if mode != "1":
+        return img, False
+    has_grays = any(value not in (0, 255) for _, value in img.getcolors(256))
+    if has_grays and PANEL.get("gray4") and GRAYSCALE != "off":
+        # Dither to the four 2-bit levels (a 2-bit image passes through
+        # unchanged), then map each level to the driver's value for it.
+        # Quantize from RGB: Pillow quantizes an "L" image to a palette wrongly.
+        flat = [v for level in GRAY_LEVELS for v in (level, level, level)]
+        palette = Image.new("P", (1, 1))
+        palette.putpalette(flat + flat[-3:] * (256 - len(GRAY_LEVELS)))
+        img = img.convert("RGB").quantize(
+            palette=palette, dither=Image.Dither.FLOYDSTEINBERG
+        ).convert("L")
+        lut = [
+            WAVESHARE_GRAYS[min(range(4), key=lambda i: abs(GRAY_LEVELS[i] - v))]
+            for v in range(256)
+        ]
+        return img.point(lut), True
+    # A 1-bit image passes through unchanged; grayscale is dithered.
+    return img.convert("1"), False
+
+
+def test_pattern():
+    """An image with the four 2-bit grays as bands above a black-to-white gradient."""
+    width, height = TARGET_RES
+    band_height = height * 2 // 3
+    img = Image.new("L", TARGET_RES, 255)
+    for i, level in enumerate(GRAY_LEVELS):
+        img.paste(level, (i * width // 4, 0, (i + 1) * width // 4, band_height))
+    gradient = Image.linear_gradient("L").rotate(90, expand=True)
+    img.paste(gradient.resize((width, height - band_height)), (0, band_height))
     return img
+
+
+def draw(driver, img, gray):
+    """Draw a prepared image on the panel, then put the panel to sleep."""
+    init_name, getbuffer_name, display_name = (
+        PANEL["gray4"] if gray else ("init", "getbuffer", "display")
+    )
+    epd = None
+    try:
+        with deadline(
+            DISPLAY_TIMEOUT_SECONDS,
+            f"display update exceeded {DISPLAY_TIMEOUT_SECONDS}s",
+        ):
+            log("Initializing display..." + (" (4-gray)" if gray else ""))
+            epd = driver.EPD()
+            if getattr(epd, init_name)() != 0:
+                raise RuntimeError("display init failed")
+            buffer_start = time.monotonic()
+            buffer = getattr(epd, getbuffer_name)(img)
+            log(f"Buffer took {time.monotonic() - buffer_start:.1f}s")
+            log("Pushing image to display...")
+            refresh_start = time.monotonic()
+            getattr(epd, display_name)(buffer)
+            refresh_seconds = time.monotonic() - refresh_start
+            log(f"Panel refresh took {refresh_seconds:.1f}s")
+            if refresh_seconds < MIN_REFRESH_SECONDS:
+                raise RuntimeError(
+                    f"panel refresh took only {refresh_seconds:.1f}s; "
+                    "display did not redraw"
+                )
+    except BaseException as draw_error:
+        # Log the draw failure before cleanup, so a cleanup failure on a
+        # wedged panel cannot hide the original cause.
+        log(f"Display update failed: {draw_error!r}")
+        if epd is not None:
+            try:
+                sleep_display(epd)
+            except Exception as cleanup_error:
+                log(f"Display cleanup also failed: {cleanup_error}")
+        raise
+    sleep_display(epd)
+
+
+def draw_test_pattern():
+    driver = load_driver()
+    if driver is None:
+        return False
+    try:
+        draw(driver, *prepare_image(test_pattern()))
+    except Exception as e:
+        log(f"Error: {e}")
+        return False
+    # Forget the last TRMNL image, so the next run redraws it.
+    if os.path.exists(CACHE_FILE):
+        os.remove(CACHE_FILE)
+    log("Test pattern drawn.")
+    return True
 
 
 def validate_config():
@@ -240,40 +338,7 @@ def update_display():
         finally:
             img_response.close()
 
-        img = prepare_image(img)
-
-        epd = None
-        try:
-            with deadline(
-                DISPLAY_TIMEOUT_SECONDS,
-                f"display update exceeded {DISPLAY_TIMEOUT_SECONDS}s",
-            ):
-                log("Initializing display...")
-                epd = driver.EPD()
-                if epd.init() != 0:
-                    raise RuntimeError("display init failed")
-                buffer = epd.getbuffer(img)
-                log("Pushing image to display...")
-                refresh_start = time.monotonic()
-                epd.display(buffer)
-                refresh_seconds = time.monotonic() - refresh_start
-                log(f"Panel refresh took {refresh_seconds:.1f}s")
-                if refresh_seconds < MIN_REFRESH_SECONDS:
-                    raise RuntimeError(
-                        f"panel refresh took only {refresh_seconds:.1f}s; "
-                        "display did not redraw"
-                    )
-        except BaseException as draw_error:
-            # Log the draw failure before cleanup, so a cleanup failure on a
-            # wedged panel cannot hide the original cause.
-            log(f"Display update failed: {draw_error!r}")
-            if epd is not None:
-                try:
-                    sleep_display(epd)
-                except Exception as cleanup_error:
-                    log(f"Display cleanup also failed: {cleanup_error}")
-            raise
-        sleep_display(epd)
+        draw(driver, *prepare_image(img))
 
         write_cache(current_filename)
 
@@ -291,4 +356,6 @@ def update_display():
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _raise_termination)
     signal.signal(signal.SIGINT, _raise_termination)
+    if sys.argv[1:] == ["--test-pattern"]:
+        sys.exit(0 if draw_test_pattern() else 1)
     sys.exit(0 if update_display() else 1)
