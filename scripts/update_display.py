@@ -83,7 +83,7 @@ MIN_REFRESH_SECONDS = float(
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.7.0"
+CLIENT_VERSION = "1.8.0"
 # TRMNL reads FW-Version as the device's firmware and offers colour palettes,
 # such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
 # firmware version instead of this client's.
@@ -407,6 +407,13 @@ def update_display():
         if not img_url:
             log("No image URL in response")
             return False
+
+        # TRMNL answers with a "Catching you up" placeholder while the next screen
+        # is still rendering; keep the last real screen (and the published copy)
+        # and take the real one at the next run.
+        if current_filename.startswith("refreshing-"):
+            log(f"TRMNL is still rendering ({current_filename}); keeping the current screen.")
+            return True
 
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "r", encoding="utf-8") as f:

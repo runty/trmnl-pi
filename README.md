@@ -79,6 +79,8 @@ redraws the TRMNL screen:
 
 - Fetches `/api/display` from TRMNL.
 - Downloads the returned image only when the filename changes.
+- Keeps the current screen when TRMNL answers with its "Catching you up"
+  placeholder (`refreshing-*`) while the next screen is rendering.
 - Renders the image through the Waveshare driver named by `TRMNL_PANEL`.
 - Runs from cron every 15 minutes and once after boot.
 - Redraws an unchanged image after 12 hours, and treats a panel refresh that
