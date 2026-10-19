@@ -27,12 +27,34 @@ B/W" (1-bit) or "TRMNL OG (2-bit)" (4 grays), which is built for the same panel.
 ## Grayscale
 
 The 7.5 inch panel can also show four shades: black, dark gray, light gray and
-white. An image that contains any gray is drawn in the driver's 4-gray mode
-(`init_4Gray`, `getbuffer_4Gray`, `display_4Gray`): it is dithered to the four
-levels of a 2-bit image (a 2-bit image from TRMNL passes through unchanged),
-and each level is mapped to the value the driver expects. A pure black-and-white
-image keeps the faster 1-bit path. Set `TRMNL_GRAYSCALE=off` to dither every
-image to black and white instead.
+white. An image that contains any gray is dithered to the four levels of a 2-bit
+image (a 2-bit image from TRMNL passes through unchanged) and drawn in a 4-gray
+mode. A pure black-and-white image keeps the 1-bit path. Set
+`TRMNL_GRAYSCALE=off` to dither every image to black and white instead.
+
+`TRMNL_GRAY_MODE` picks the 4-gray waveform:
+
+| `TRMNL_GRAY_MODE` | Waveform |
+| --- | --- |
+| `trmnl` (default) | TRMNL firmware's default for this panel, bb_epaper's `EP75_800x480_4GRAY` |
+| `trmnl-dark` | TRMNL's darker variant, `EP75_800x480_4GRAY_V2` |
+| `waveshare` | Waveshare's `init_4Gray`/`display_4Gray`, which uses the panel's built-in waveform; black stays a dark gray |
+
+The TRMNL waveforms come from [bb_epaper](https://github.com/bitbank2/bb_epaper),
+the library TRMNL's firmware uses. bb_epaper is GPL-3.0, so this client does not
+copy its tables: `scripts/trmnl_gray.py` reads the init sequence from a bb_epaper
+checkout at run time (`BB_EPAPER_SRC`, default `~/bb_epaper/src`). Pin it to the
+commit TRMNL's firmware uses (firmware 1.8.17 pins `1a38d706`):
+
+```bash
+git init -q ~/bb_epaper && cd ~/bb_epaper
+git remote add origin https://github.com/bitbank2/bb_epaper.git
+git fetch -q --depth 1 origin 1a38d706b0259d3637df65a91de09abc3f7ccd5f
+git checkout -q FETCH_HEAD
+```
+
+If the checkout or the sequence is missing, gray images are drawn in black and
+white and the log says why.
 
 TRMNL only renders grays for firmware 1.6 or later, which it reads from the
 `FW-Version` header; the client sends its own version (1.3.0) unless
@@ -40,8 +62,9 @@ TRMNL only renders grays for firmware 1.6 or later, which it reads from the
 "TRMNL OG (2-bit)" model and the 4-gray colour palette on trmnl.com, and wait for
 each plugin's next refresh.
 
-On a Pi Zero 2 W a 4-gray draw takes about 15 s (1.5 s to build the buffer and
-9 s to send it byte by byte and refresh), against about 10 s for 1-bit.
+On a Pi Zero 2 W a refresh takes about 3 s in 1-bit and with the TRMNL
+waveforms; Waveshare's 4-gray mode takes about 9 s, because it sends the image
+one byte at a time.
 
 To check the panel's shades without TRMNL, draw the test card: four bands in
 the 2-bit grays above a black-to-white gradient. It takes the same lock as cron,
@@ -73,6 +96,7 @@ redraws the TRMNL screen:
 ## Files
 
 - `scripts/update_display.py` - TRMNL API fetch, image processing, display update.
+- `scripts/trmnl_gray.py` - TRMNL's 4-gray waveforms, read from a bb_epaper checkout.
 - `scripts/update_display.sh` - cron-safe launcher with env loading, lock, timeout.
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
 - `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.

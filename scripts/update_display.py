@@ -10,6 +10,7 @@ from io import BytesIO
 import requests
 from PIL import Image
 
+import trmnl_gray
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -21,7 +22,9 @@ sys.path.insert(0, WAVESHARE_LIB)
 # Supported Waveshare drivers, chosen with TRMNL_PANEL. image_mode is what the
 # image is converted to before the driver's getbuffer(); a refresh faster than
 # min_refresh_seconds means the panel did not actually redraw. gray4 names the
-# driver's init, getbuffer and display methods for its 4-gray mode.
+# driver's init, getbuffer and display methods for its 4-gray mode, and
+# gray_waveforms the bb_epaper init sequences that TRMNL_GRAY_MODE can pick
+# instead (see trmnl_gray.py).
 PANELS = {
     # 7.3" Spectra 6: a real refresh holds BUSY for ~30s.
     "epd7in3e": {
@@ -35,6 +38,11 @@ PANELS = {
         "min_refresh_seconds": 1,
         "model": "Waveshare 7.5 V2",
         "gray4": ("init_4Gray", "getbuffer_4Gray", "display_4Gray"),
+        # TRMNL firmware's EP75_800x480_4GRAY (its default) and _V2 (darker).
+        "gray_waveforms": {
+            "trmnl": "epd75_old_gray_init",
+            "trmnl-dark": "epd75_old_gray_init2",
+        },
     },
 }
 PANEL_NAME = os.getenv("TRMNL_PANEL", "")
@@ -42,6 +50,9 @@ PANEL = PANELS.get(PANEL_NAME, {})
 # "auto" draws images that contain grays in the panel's 4-gray mode; "off"
 # always dithers to black and white.
 GRAYSCALE = os.getenv("TRMNL_GRAYSCALE", "auto").lower()
+# Which 4-gray mode to use: a key of the panel's gray_waveforms (TRMNL's
+# waveforms, read from bb_epaper), or "waveshare" for the driver's own mode.
+GRAY_MODE = os.getenv("TRMNL_GRAY_MODE", "trmnl").lower()
 # The four levels of a 2-bit image, black to white, and the values Waveshare's
 # getbuffer_4Gray() expects for them (its GRAY4, GRAY3, GRAY2 and GRAY1).
 GRAY_LEVELS = (0, 85, 170, 255)
@@ -63,7 +74,7 @@ MIN_REFRESH_SECONDS = float(
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.3.0"
+CLIENT_VERSION = "1.4.0"
 # TRMNL reads FW-Version as the device's firmware and offers colour palettes,
 # such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
 # firmware version instead of this client's.
@@ -177,8 +188,7 @@ def prepare_image(img):
         return img, False
     has_grays = any(value not in (0, 255) for _, value in img.getcolors(256))
     if has_grays and PANEL.get("gray4") and GRAYSCALE != "off":
-        # Dither to the four 2-bit levels (a 2-bit image passes through
-        # unchanged), then map each level to the driver's value for it.
+        # Dither to the four 2-bit levels; a 2-bit image passes through unchanged.
         # Quantize from RGB: Pillow quantizes an "L" image to a palette wrongly.
         flat = [v for level in GRAY_LEVELS for v in (level, level, level)]
         palette = Image.new("P", (1, 1))
@@ -186,13 +196,26 @@ def prepare_image(img):
         img = img.convert("RGB").quantize(
             palette=palette, dither=Image.Dither.FLOYDSTEINBERG
         ).convert("L")
-        lut = [
-            WAVESHARE_GRAYS[min(range(4), key=lambda i: abs(GRAY_LEVELS[i] - v))]
-            for v in range(256)
-        ]
-        return img.point(lut), True
+        return img, True
     # A 1-bit image passes through unchanged; grayscale is dithered.
     return img.convert("1"), False
+
+
+def gray_waveform():
+    """bb_epaper steps for TRMNL_GRAY_MODE, None for Waveshare's own 4-gray mode.
+
+    Raises ValueError for an unknown mode, OSError or ValueError when bb_epaper
+    or the sequence is missing.
+    """
+    waveforms = PANEL.get("gray_waveforms", {})
+    if GRAY_MODE == "waveshare":
+        return None
+    if GRAY_MODE not in waveforms:
+        raise ValueError(
+            f"TRMNL_GRAY_MODE must be one of: {', '.join([*waveforms, 'waveshare'])} "
+            f"(got {GRAY_MODE!r})"
+        )
+    return trmnl_gray.load_sequence(waveforms[GRAY_MODE])
 
 
 def test_pattern():
@@ -209,26 +232,43 @@ def test_pattern():
 
 def draw(driver, img, gray):
     """Draw a prepared image on the panel, then put the panel to sleep."""
-    init_name, getbuffer_name, display_name = (
-        PANEL["gray4"] if gray else ("init", "getbuffer", "display")
-    )
+    steps = None
+    if gray:
+        try:
+            steps = gray_waveform()
+        except (OSError, ValueError) as e:
+            log(f"ERROR: no {GRAY_MODE} gray waveform ({e}); drawing in black and white instead")
+            img, gray = img.convert("1"), False
     epd = None
     try:
         with deadline(
             DISPLAY_TIMEOUT_SECONDS,
             f"display update exceeded {DISPLAY_TIMEOUT_SECONDS}s",
         ):
-            log("Initializing display..." + (" (4-gray)" if gray else ""))
+            log("Initializing display..." + (f" (4-gray, {GRAY_MODE})" if gray else ""))
             epd = driver.EPD()
-            if getattr(epd, init_name)() != 0:
-                raise RuntimeError("display init failed")
-            buffer_start = time.monotonic()
-            buffer = getattr(epd, getbuffer_name)(img)
-            log(f"Buffer took {time.monotonic() - buffer_start:.1f}s")
-            log("Pushing image to display...")
-            refresh_start = time.monotonic()
-            getattr(epd, display_name)(buffer)
-            refresh_seconds = time.monotonic() - refresh_start
+            if steps is not None:
+                log("Pushing image to display...")
+                refresh_seconds = trmnl_gray.draw(epd, driver.epdconfig, img, steps)
+            else:
+                init_name, getbuffer_name, display_name = (
+                    PANEL["gray4"] if gray else ("init", "getbuffer", "display")
+                )
+                if gray:
+                    # Map each 2-bit level to the value Waveshare's driver expects.
+                    img = img.point([
+                        WAVESHARE_GRAYS[min(range(4), key=lambda i: abs(GRAY_LEVELS[i] - v))]
+                        for v in range(256)
+                    ])
+                if getattr(epd, init_name)() != 0:
+                    raise RuntimeError("display init failed")
+                buffer_start = time.monotonic()
+                buffer = getattr(epd, getbuffer_name)(img)
+                log(f"Buffer took {time.monotonic() - buffer_start:.1f}s")
+                log("Pushing image to display...")
+                refresh_start = time.monotonic()
+                getattr(epd, display_name)(buffer)
+                refresh_seconds = time.monotonic() - refresh_start
             log(f"Panel refresh took {refresh_seconds:.1f}s")
             if refresh_seconds < MIN_REFRESH_SECONDS:
                 raise RuntimeError(
