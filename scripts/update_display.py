@@ -28,10 +28,10 @@ PANELS = {
         "min_refresh_seconds": 10,
         "model": "Waveshare 7.3 Spectra 6",
     },
-    # 7.5" V2 black and white: a full refresh takes about 5s.
+    # 7.5" V2 black and white: a full refresh holds BUSY for ~3s.
     "epd7in5_V2": {
         "image_mode": "1",
-        "min_refresh_seconds": 2,
+        "min_refresh_seconds": 1,
         "model": "Waveshare 7.5 V2",
     },
 }

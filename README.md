@@ -13,7 +13,7 @@ Set `TRMNL_PANEL` in `trmnl-pi.env` to the Waveshare driver for the attached pan
 
 | `TRMNL_PANEL` | Panel | Image | Real refresh |
 | --- | --- | --- | --- |
-| `epd7in5_V2` | 7.5 inch V2, 800×480, black and white | 1-bit | about 5 s |
+| `epd7in5_V2` | 7.5 inch V2, 800×480, black and white | 1-bit | about 3 s |
 | `epd7in3e` | 7.3 inch Spectra 6, 800×480 | RGB | about 30 s |
 
 Each driver needs its BUSY timeout patch from `patches/` (see below). The
