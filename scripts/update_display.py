@@ -71,13 +71,17 @@ CACHE_FILE = os.path.expanduser(
 # When set, each image drawn is also saved there as current.png, as the panel
 # shows it, so another display can mirror this one (see the README).
 PUBLISH_DIR = os.path.expanduser(os.getenv("TRMNL_PUBLISH_DIR", ""))
+# Optional WIDTHxHEIGHT for the published image: scaled to fill it, keeping the
+# top and cropping the rest; TRMNL_PUBLISH_GRAYS snaps it to that many shades.
+PUBLISH_SIZE = tuple(int(n) for n in os.getenv("TRMNL_PUBLISH_SIZE", "").split("x") if n)
+PUBLISH_GRAYS = int(os.getenv("TRMNL_PUBLISH_GRAYS", "0"))
 MIN_REFRESH_SECONDS = float(
     os.getenv("TRMNL_MIN_REFRESH_SECONDS") or PANEL.get("min_refresh_seconds", 10)
 )
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.5.0"
+CLIENT_VERSION = "1.6.0"
 # TRMNL reads FW-Version as the device's firmware and offers colour palettes,
 # such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
 # firmware version instead of this client's.
@@ -155,6 +159,23 @@ def write_cache(filename):
     os.replace(tmp, CACHE_FILE)
 
 
+def fill_for_mirror(img, size, grays):
+    """Scale img to cover size, keep its top, crop the rest; snap to grays shades."""
+    width, height = size
+    img = img.convert("RGB" if img.mode == "RGB" else "L")
+    scale = max(width / img.width, height / img.height)
+    scaled = (max(width, round(img.width * scale)), max(height, round(img.height * scale)))
+    img = img.resize(scaled, Image.Resampling.LANCZOS)
+    left = (img.width - width) // 2
+    img = img.crop((left, 0, left + width, height))
+    if grays > 1 and img.mode == "L":
+        # Even steps from black to white; a 3-bit panel that keeps a gray's top
+        # three bits (Inkplate) then draws step k as shade k, with no dithering.
+        step = 255 / (grays - 1)
+        img = img.point(lambda v: int(round(v / step) * step))
+    return img
+
+
 def publish_image(img):
     """Save the drawn image as PUBLISH_DIR/current.png; failures only log."""
     if not PUBLISH_DIR:
@@ -163,6 +184,8 @@ def publish_image(img):
     tmp = f"{path}.tmp"
     try:
         os.makedirs(PUBLISH_DIR, exist_ok=True)
+        if len(PUBLISH_SIZE) == 2:
+            img = fill_for_mirror(img, PUBLISH_SIZE, PUBLISH_GRAYS)
         # A 4-gray image is saved as 8-bit gray holding only GRAY_LEVELS; it
         # compresses smaller than a 2-bit palette PNG of the same pixels.
         img.save(tmp, "PNG", optimize=True)
