@@ -259,18 +259,23 @@ The mirror then fetches `http://<this-host>:8075/current.png`; Python's server
 answers `If-Modified-Since` with `304`, so an unchanged image is not redrawn.
 For an Inkplate, HomePlate's image URL activity does this.
 
-To fill a mirror with a different shape, set its size and gray depth:
+To fill a mirror with a different shape, set its size and gray depth, and
+optionally drop rows from the bottom first:
 
 ```bash
 TRMNL_PUBLISH_SIZE=960x540
 TRMNL_PUBLISH_GRAYS=8
+TRMNL_PUBLISH_CROP_BOTTOM=50
 ```
 
-The image is then scaled to cover that size, keeping the top and cropping the
-rest (for 800×480 on 960×540: ×1.2, 36 rows cropped off the bottom), and each
-pixel is snapped to one of `TRMNL_PUBLISH_GRAYS` even steps from black to white.
-Scaling adds gray edges; snapping them to an Inkplate 5's 8 shades lets it draw
-them with dithering off, since it keeps the top three bits of each gray.
+The image is scaled to the mirror's width. A taller result keeps its top and
+loses rows at the bottom; a shorter one is centred between equal white bands,
+so nothing is cut from the sides. On an 800×480 TRMNL screen, rows 431–469 are
+the footer bar and the last 10 are margin, so `TRMNL_PUBLISH_CROP_BOTTOM=50`
+removes it: 800×430 becomes 960×516 with 12 white rows above and below. Each
+pixel is then snapped to one of `TRMNL_PUBLISH_GRAYS` even steps from black to
+white. Scaling adds gray edges; snapping them to an Inkplate 5's 8 shades lets
+it draw them with dithering off, since it keeps the top three bits of each gray.
 
 ## Waveshare Busy Timeout
 

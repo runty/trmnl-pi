@@ -71,17 +71,19 @@ CACHE_FILE = os.path.expanduser(
 # When set, each image drawn is also saved there as current.png, as the panel
 # shows it, so another display can mirror this one (see the README).
 PUBLISH_DIR = os.path.expanduser(os.getenv("TRMNL_PUBLISH_DIR", ""))
-# Optional WIDTHxHEIGHT for the published image: scaled to fill it, keeping the
-# top and cropping the rest; TRMNL_PUBLISH_GRAYS snaps it to that many shades.
+# Optional WIDTHxHEIGHT for the published image: scaled to its width, then cut
+# or padded to its height; TRMNL_PUBLISH_GRAYS snaps it to that many shades and
+# TRMNL_PUBLISH_CROP_BOTTOM drops rows first (50 removes TRMNL's footer bar).
 PUBLISH_SIZE = tuple(int(n) for n in os.getenv("TRMNL_PUBLISH_SIZE", "").split("x") if n)
 PUBLISH_GRAYS = int(os.getenv("TRMNL_PUBLISH_GRAYS", "0"))
+PUBLISH_CROP_BOTTOM = int(os.getenv("TRMNL_PUBLISH_CROP_BOTTOM", "0"))
 MIN_REFRESH_SECONDS = float(
     os.getenv("TRMNL_MIN_REFRESH_SECONDS") or PANEL.get("min_refresh_seconds", 10)
 )
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.6.0"
+CLIENT_VERSION = "1.7.0"
 # TRMNL reads FW-Version as the device's firmware and offers colour palettes,
 # such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
 # firmware version instead of this client's.
@@ -159,15 +161,24 @@ def write_cache(filename):
     os.replace(tmp, CACHE_FILE)
 
 
-def fill_for_mirror(img, size, grays):
-    """Scale img to cover size, keep its top, crop the rest; snap to grays shades."""
+def fill_for_mirror(img, size, grays, crop_bottom=0):
+    """Fit img to size's width after dropping crop_bottom rows; snap to grays shades.
+
+    A taller result keeps its top and loses rows at the bottom; a shorter one is
+    centred between equal white bands, so nothing is cut from the sides.
+    """
     width, height = size
     img = img.convert("RGB" if img.mode == "RGB" else "L")
-    scale = max(width / img.width, height / img.height)
-    scaled = (max(width, round(img.width * scale)), max(height, round(img.height * scale)))
-    img = img.resize(scaled, Image.Resampling.LANCZOS)
-    left = (img.width - width) // 2
-    img = img.crop((left, 0, left + width, height))
+    if 0 < crop_bottom < img.height:
+        img = img.crop((0, 0, img.width, img.height - crop_bottom))
+    scaled_height = round(img.height * width / img.width)
+    img = img.resize((width, scaled_height), Image.Resampling.LANCZOS)
+    if scaled_height >= height:
+        img = img.crop((0, 0, width, height))
+    else:
+        canvas = Image.new(img.mode, (width, height), "white")
+        canvas.paste(img, (0, (height - scaled_height) // 2))
+        img = canvas
     if grays > 1 and img.mode == "L":
         # Even steps from black to white; a 3-bit panel that keeps a gray's top
         # three bits (Inkplate) then draws step k as shade k, with no dithering.
@@ -185,7 +196,7 @@ def publish_image(img):
     try:
         os.makedirs(PUBLISH_DIR, exist_ok=True)
         if len(PUBLISH_SIZE) == 2:
-            img = fill_for_mirror(img, PUBLISH_SIZE, PUBLISH_GRAYS)
+            img = fill_for_mirror(img, PUBLISH_SIZE, PUBLISH_GRAYS, PUBLISH_CROP_BOTTOM)
         # A 4-gray image is saved as 8-bit gray holding only GRAY_LEVELS; it
         # compresses smaller than a 2-bit palette PNG of the same pixels.
         img.save(tmp, "PNG", optimize=True)
