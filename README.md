@@ -101,6 +101,7 @@ redraws the TRMNL screen:
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
 - `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.
 - `config/systemd/trmnl-network-watchdog.{service,timer}` - root watchdog units.
+- `config/systemd/trmnl-publish.service` - optional web server for a mirroring display.
 - `trmnl-pi.env.example` - local configuration template.
 - `config/cron/user-crontab` - user crontab entries.
 - `config/logrotate.d/trmnl-display` - log rotation for `cron.log`.
@@ -232,6 +233,30 @@ TRMNL_HEARTBEAT_URL=https://uptime.example.org/api/push/<token>
 logs a warning. If the Kuma hostname resolves to an address the Pi cannot reach
 (for example a Tailscale address), pin it to a LAN address with
 `TRMNL_HEARTBEAT_RESOLVE=host:443:address`, which is passed to `curl --resolve`.
+
+## Mirror to Another Display
+
+Another display on the LAN can show exactly what this panel shows, without a
+TRMNL licence of its own. Set a publish folder in `trmnl-pi.env`:
+
+```bash
+TRMNL_PUBLISH_DIR=$HOME/trmnl-scripts/www
+```
+
+After each successful draw, `update_display.py` saves the image as the panel
+shows it to `current.png` there: 1-bit, or 2-bit gray for 4-gray screens. A
+failed save only logs a warning. Serve the folder on port 8075:
+
+```bash
+sed "s|YOUR_USER|$(id -un)|g" config/systemd/trmnl-publish.service \
+  | sudo tee /etc/systemd/system/trmnl-publish.service >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl enable --now trmnl-publish.service
+```
+
+The mirror then fetches `http://<this-host>:8075/current.png`; Python's server
+answers `If-Modified-Since` with `304`, so an unchanged image is not redrawn.
+For an Inkplate, HomePlate's image URL activity does this.
 
 ## Waveshare Busy Timeout
 

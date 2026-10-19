@@ -1,0 +1,13 @@
+[Unit]
+Description=Serve the last TRMNL image drawn, for displays that mirror this one
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=YOUR_USER
+ExecStartPre=/usr/bin/mkdir -p /home/YOUR_USER/trmnl-scripts/www
+ExecStart=/usr/bin/python3 -m http.server 8075 --bind 0.0.0.0 --directory /home/YOUR_USER/trmnl-scripts/www
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

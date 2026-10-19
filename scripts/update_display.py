@@ -68,13 +68,16 @@ TARGET_RES = (
 CACHE_FILE = os.path.expanduser(
     os.getenv("TRMNL_CACHE_FILE", os.path.join(PROJECT_DIR, "last_image.txt"))
 )
+# When set, each image drawn is also saved there as current.png, as the panel
+# shows it, so another display can mirror this one (see the README).
+PUBLISH_DIR = os.path.expanduser(os.getenv("TRMNL_PUBLISH_DIR", ""))
 MIN_REFRESH_SECONDS = float(
     os.getenv("TRMNL_MIN_REFRESH_SECONDS") or PANEL.get("min_refresh_seconds", 10)
 )
 # Redraw an unchanged image after this long, in case an earlier draw was lost.
 FORCE_REDRAW_HOURS = float(os.getenv("TRMNL_FORCE_REDRAW_HOURS", "12"))
 DISPLAY_MODEL = os.getenv("TRMNL_MODEL") or PANEL.get("model", "")
-CLIENT_VERSION = "1.4.0"
+CLIENT_VERSION = "1.5.0"
 # TRMNL reads FW-Version as the device's firmware and offers colour palettes,
 # such as 4 grays, only from firmware 1.6; TRMNL_FW_VERSION reports a TRMNL
 # firmware version instead of this client's.
@@ -150,6 +153,21 @@ def write_cache(filename):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(filename)
     os.replace(tmp, CACHE_FILE)
+
+
+def publish_image(img, gray):
+    """Save the drawn image as PUBLISH_DIR/current.png; failures only log."""
+    if not PUBLISH_DIR:
+        return
+    path = os.path.join(PUBLISH_DIR, "current.png")
+    tmp = f"{path}.tmp"
+    try:
+        os.makedirs(PUBLISH_DIR, exist_ok=True)
+        # A 4-gray image holds only GRAY_LEVELS, so 2 bits store it exactly.
+        img.save(tmp, "PNG", optimize=True, **({"bits": 2} if gray else {}))
+        os.replace(tmp, path)
+    except Exception as e:
+        log(f"WARNING: could not publish {path}: {e}")
 
 
 def load_driver():
@@ -382,9 +400,11 @@ def update_display():
         finally:
             img_response.close()
 
-        draw(driver, *prepare_image(img))
+        img, gray = prepare_image(img)
+        draw(driver, img, gray)
 
         write_cache(current_filename)
+        publish_image(img, gray)
 
         log("Update complete!")
         return True
