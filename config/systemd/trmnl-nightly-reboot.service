@@ -1,0 +1,6 @@
+[Unit]
+Description=Reboot the TRMNL display Pi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl reboot
