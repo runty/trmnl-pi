@@ -103,7 +103,6 @@ redraws the TRMNL screen:
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
 - `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.
 - `config/systemd/trmnl-network-watchdog.{service,timer}` - root watchdog units.
-- `config/systemd/trmnl-nightly-reboot.{service,timer}` - optional daily 02:00 reboot (local time).
 - `config/systemd/trmnl-publish.service` - optional web server for a mirroring display.
 - `trmnl-pi.env.example` - local configuration template.
 - `config/cron/user-crontab` - user crontab entries.
@@ -187,17 +186,6 @@ after four failed attempts:
 
 ```bash
 sudo nmcli connection modify "<connection-name>" connection.autoconnect-retries 0
-```
-
-## Nightly Reboot
-
-Optional. A scheduled reboot clears a stalled Wi-Fi driver or leaked memory, but
-it cannot recover a Pi that has frozen outright.
-
-```bash
-sudo install -m 644 config/systemd/trmnl-nightly-reboot.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now trmnl-nightly-reboot.timer
 ```
 
 ## Network Watchdog
