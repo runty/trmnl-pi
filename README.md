@@ -103,6 +103,7 @@ redraws the TRMNL screen:
 - `scripts/status.sh` - local diagnostic helper for stale screens and Wi-Fi issues.
 - `scripts/network_watchdog.sh` - Wi-Fi recovery run by the watchdog timer.
 - `config/systemd/trmnl-network-watchdog.{service,timer}` - root watchdog units.
+- `config/systemd/trmnl-nightly-poweroff.{service,timer}` - optional 01:57 shutdown (local time), for a frame on a smart plug that cuts power at 02:02.
 - `config/systemd/trmnl-publish.service` - optional web server for a mirroring display.
 - `trmnl-pi.env.example` - local configuration template.
 - `config/cron/user-crontab` - user crontab entries.
@@ -186,6 +187,17 @@ after four failed attempts:
 
 ```bash
 sudo nmcli connection modify "<connection-name>" connection.autoconnect-retries 0
+```
+
+## Nightly Shutdown
+
+Optional, for a frame whose smart plug power-cycles it every morning: shutting
+down first avoids cutting power mid-write.
+
+```bash
+sudo install -m 644 config/systemd/trmnl-nightly-poweroff.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now trmnl-nightly-poweroff.timer
 ```
 
 ## Network Watchdog

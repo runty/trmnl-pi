@@ -1,0 +1,6 @@
+[Unit]
+Description=Shut down the TRMNL display Pi before its smart plug cuts power
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl poweroff

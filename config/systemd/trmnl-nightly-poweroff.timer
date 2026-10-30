@@ -1,0 +1,9 @@
+[Unit]
+Description=Shut down the TRMNL display Pi every morning at 01:57
+
+[Timer]
+OnCalendar=*-*-* 01:57:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
